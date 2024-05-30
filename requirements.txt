@@ -1,6 +1,5 @@
 numpy
 pandas
-tensorflow_cpu
 matplotlib
 tqdm
 fancyimpute

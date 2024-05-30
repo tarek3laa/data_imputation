@@ -6,40 +6,6 @@ from fancyimpute import *
 from models.OTimputer import *
 from models.gain import *
 from concurrent.futures import ThreadPoolExecutor
-import tensorflow as tf
-import torch
-import random
-
-
-def set_seed(seed: int):
-    """
-    Set the random seed for reproducibility across numpy, TensorFlow, and PyTorch.
-
-    Parameters:
-    seed (int): The seed value to set.
-    """
-    # Set the seed for Python's built-in random module
-    random.seed(seed)
-
-    # Set the seed for NumPy
-    np.random.seed(seed)
-
-    # Set the seed for TensorFlow
-    tf.random.set_seed(seed)
-
-    # Set the seed for PyTorch
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
-
-    # Ensure deterministic behavior in PyTorch
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-    # Set environment variables for other potential sources of randomness
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    os.environ['TF_DETERMINISTIC_OPS'] = '1'
 
 
 def parallelize(func, iterable):
@@ -76,7 +42,7 @@ def load_model(k_nearest_value):
     knn = KNN(verbose=False, k=k_nearest_value)
     soft_impute = SoftImpute(verbose=False)
     iterative_impute = IterativeImputer(verbose=False)
-    iterative_SVD = IterativeSVD(verbose=False)
+    iterative_SVD = IterativeSVD(verbose=False, rank=k_nearest_value - 1)
 
     models = [gain, bsi, simple_fill_mean, simple_fill_median, simple_fill_random, knn, soft_impute, iterative_impute,
               iterative_SVD]
@@ -100,7 +66,6 @@ def print_results(results, all_missing_data, exp_name):
     models_name = ['gain', 'bsi',
                    'simple_fill_mean', 'simple_fill_median', 'simple_fill_random', 'knn', 'soft_impute',
                    'iterative_impute', 'iterative_SVD']
-
     os.makedirs(f'results_{exp_name}', exist_ok=True)
     for i in range(len(results)):
         k = all_missing_data[i].shape[1] - 1
@@ -155,5 +120,4 @@ def run_full_imputation(target_data_path, missing_data_dir, exp_name):
 
 
 if __name__ == '__main__':
-    set_seed(42)
     run_full_imputation()

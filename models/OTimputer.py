@@ -1,8 +1,10 @@
 import numpy as np
 import torch
 from geomloss import SamplesLoss
-#from ..utils.ot_utils import *
+# from ..utils.ot_utils import *
 from utils.ot_utils import *
+
+
 class BatchSinkhornImputation():
     """
     'One parameter equals one imputed value' model (Algorithm 1. in the paper)
@@ -39,10 +41,11 @@ class BatchSinkhornImputation():
         c.f. geomloss' doc: "Allows you to specify the trade-off between
         speed (scaling < .4) and accuracy (scaling > .9)"
     """
-    def __init__(self, 
-                 eps=0.01, 
-                 lr=1e-2, 
-                 opt=torch.optim.RMSprop, 
+
+    def __init__(self,
+                 eps=0.01,
+                 lr=1e-2,
+                 opt=torch.optim.RMSprop,
                  niter=2000,
                  batchsize=32,
                  n_pairs=1,
@@ -85,7 +88,7 @@ class BatchSinkhornImputation():
 
         mask = torch.isnan(X).double()
         imps = (self.noise * torch.randn(mask.shape).double() + nanmean(X, 0))[mask.bool()]
-        imps.requires_grad=True
+        imps.requires_grad = True
         optimizer = self.opt([imps], lr=self.lr)
 
         if X_true is not None:
@@ -97,15 +100,14 @@ class BatchSinkhornImputation():
             X_filled = X.detach().clone()
             X_filled[mask.bool()] = imps
             loss = 0
-            
-            for _ in range(self.n_pairs):
 
+            for _ in range(self.n_pairs):
                 idx1 = np.random.choice(n, self.batchsize, replace=False)
                 idx2 = np.random.choice(n, self.batchsize, replace=False)
-    
+
                 X1 = X_filled[idx1]
                 X2 = X_filled[idx2]
-    
+
                 loss = loss + self.sk(X1, X2)
 
             if torch.isnan(loss).any() or torch.isinf(loss).any():
@@ -117,18 +119,10 @@ class BatchSinkhornImputation():
             loss.backward()
             optimizer.step()
 
-
         X_filled = X.detach().clone()
         X_filled[mask.bool()] = imps
 
-        return X_filled
-
-
-
-
-
-
-
+        return X_filled.detach().cpu().numpy()
 
 
 class RRimputer():
@@ -170,20 +164,21 @@ class RRimputer():
         c.f. geomloss' doc: "Allows you to specify the trade-off between
         speed (scaling < .4) and accuracy (scaling > .9)"
     """
+
     def __init__(self,
-                 models, 
-                 eps= 0.01, 
-                 lr=1e-2, 
-                 opt=torch.optim.Adam, 
+                 models,
+                 eps=0.01,
+                 lr=1e-2,
+                 opt=torch.optim.Adam,
                  max_iter=1,
-                 niter=1, 
+                 niter=1,
                  batchsize=4,
-                 n_pairs=10, 
+                 n_pairs=10,
                  tol=1e-3,
                  noise=0.1,
-                 weight_decay=1e-5, 
+                 weight_decay=1e-5,
                  order='random',
-                 unsymmetrize=True, 
+                 unsymmetrize=True,
                  scaling=.9):
 
         self.models = models
@@ -197,8 +192,8 @@ class RRimputer():
         self.n_pairs = n_pairs
         self.tol = tol
         self.noise = noise
-        self.weight_decay=weight_decay
-        self.order=order
+        self.weight_decay = weight_decay
+        self.order = order
         self.unsymmetrize = unsymmetrize
 
         self.is_fitted = False
@@ -242,8 +237,7 @@ class RRimputer():
         imps = (self.noise * torch.randn(mask.shape).double().to('cuda') + nanmean(X, 0).to('cuda'))[mask.bool()]
         X[mask.bool()] = imps
         X_filled = X.clone()
-        
-        
+
         for i in range(self.max_iter):
 
             if self.order == 'random':
@@ -264,16 +258,17 @@ class RRimputer():
                     loss = 0
 
                     X_filled = X_filled.detach()
-                    X_filled[mask[:, j].bool(), j] = self.models[j](X_filled[mask[:, j].bool(), :][:, np.r_[0:j, j+1: d]]).squeeze()
+                    X_filled[mask[:, j].bool(), j] = self.models[j](
+                        X_filled[mask[:, j].bool(), :][:, np.r_[0:j, j + 1: d]]).squeeze()
 
                     for _ in range(self.n_pairs):
-                        
+
                         idx1 = np.random.choice(n, self.batchsize, replace=False)
                         X1 = X_filled[idx1]
 
                         if self.unsymmetrize:
                             n_miss = (~mask[:, j].bool()).sum().item()
-                            idx2 = np.random.choice(n_miss, self.batchsize, replace= self.batchsize > n_miss)
+                            idx2 = np.random.choice(n_miss, self.batchsize, replace=self.batchsize > n_miss)
                             X2 = X_filled[~mask[:, j].bool(), :][idx2]
 
                         else:
@@ -288,8 +283,8 @@ class RRimputer():
 
                 # Impute with last parameters
                 with torch.no_grad():
-                    X_filled[mask[:, j].bool(), j] = self.models[j](X_filled[mask[:, j].bool(), :][:, np.r_[0:j, j+1: d]]).squeeze()
-
+                    X_filled[mask[:, j].bool(), j] = self.models[j](
+                        X_filled[mask[:, j].bool(), :][:, np.r_[0:j, j + 1: d]]).squeeze()
 
         self.is_fitted = True
-        return X_filled
+        return X_filled.detach().cpu().numpy()
