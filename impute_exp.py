@@ -91,6 +91,7 @@ def calculate_losses(results, target, target_column, all_missing_data, exp_name)
 
     target = np.array(target).reshape(-1)
     os.makedirs(f'losses_{exp_name}', exist_ok=True)
+    output = {}
     # loop over dataframe
     for i in range(len(results)):
         missing_column = all_missing_data[i].columns.get_loc(target_column)
@@ -104,7 +105,12 @@ def calculate_losses(results, target, target_column, all_missing_data, exp_name)
             models_losses.append(get_loss(target, imputed_column, mask[:, missing_column], models_name[j]))
 
         df = pd.DataFrame(models_losses)
-        df.to_csv(f'losses_{exp_name}/losses_k_{k}.csv', index=False)
+        output[f"K_{k}"] = df
+
+    combined_df = pd.concat(output, axis=1, keys=output.keys())
+
+    # Display the result
+    combined_df.to_csv(f'losses_{exp_name}/output.csv', index=False)
 
 
 @click.command()
