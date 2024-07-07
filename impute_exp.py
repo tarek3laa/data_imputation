@@ -44,9 +44,9 @@ def load_model(k_nearest_value):
     iterative_impute = IterativeImputer(verbose=False)
     iterative_SVD = IterativeSVD(verbose=False, rank=k_nearest_value - 1)
 
-    models = [gain, bsi, simple_fill_mean, simple_fill_median, simple_fill_random, knn, soft_impute, iterative_impute,
-              iterative_SVD]
-
+    # models = [gain, bsi, simple_fill_mean, simple_fill_median, simple_fill_random, knn, soft_impute, iterative_impute,
+    #           iterative_SVD]
+    models = [KNN(verbose=False, k=3), KNN(verbose=False, k=5), KNN(verbose=False, k=7), KNN(verbose=False, k=9)]
     return models
 
 
@@ -63,9 +63,10 @@ def impute_single_data(missing_data):
 
 
 def print_results(results, all_missing_data, exp_name):
-    models_name = ['gain', 'bsi',
-                   'simple_fill_mean', 'simple_fill_median', 'simple_fill_random', 'knn', 'soft_impute',
-                   'iterative_impute', 'iterative_SVD']
+    # models_name = ['gain', 'bsi',
+    #                'simple_fill_mean', 'simple_fill_median', 'simple_fill_random', 'knn', 'soft_impute',
+    #                'iterative_impute', 'iterative_SVD']
+    models_name = ['KNN_3', 'KNN_5', 'KNN_7', 'KNN_9']
     os.makedirs(f'results_{exp_name}', exist_ok=True)
     for i in range(len(results)):
         k = all_missing_data[i].shape[1] - 1
@@ -85,9 +86,10 @@ def get_loss(target, imputed_column, mask, model_name):
 
 
 def calculate_losses(results, target, target_column, all_missing_data, exp_name):
-    models_name = ['gain', 'bsi',
-                   'simple_fill_mean', 'simple_fill_median', 'simple_fill_random', 'knn', 'soft_impute',
-                   'iterative_impute', 'iterative_SVD']
+    # models_name = ['gain', 'bsi',
+    #                'simple_fill_mean', 'simple_fill_median', 'simple_fill_random', 'knn', 'soft_impute',
+    #                'iterative_impute', 'iterative_SVD']
+    models_name = ['KNN_3', 'KNN_5', 'KNN_7', 'KNN_9']
 
     target = np.array(target).reshape(-1)
     os.makedirs(f'losses_{exp_name}', exist_ok=True)
