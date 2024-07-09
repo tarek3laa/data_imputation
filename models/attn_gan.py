@@ -1,10 +1,7 @@
-import torch.nn as nn
 import torch
 import torch.nn.functional as F
+from torch import nn
 import math
-
-from torch import optim
-from torch.nn import ModuleList
 
 
 class MultiHeadAttention(nn.Module):
@@ -22,16 +19,14 @@ class MultiHeadAttention(nn.Module):
         self.W_O = nn.Linear(num_heads * d_v, d_model)
 
     def forward(self, Q, K, V):
-        # Perform linear transformation and split into multiple heads
         Q = self.W_Q(Q).view(Q.size(0), -1, self.num_heads, self.d_k).transpose(1, 2)  # B x h x L x d_k
         K = self.W_K(K).view(K.size(0), -1, self.num_heads, self.d_k).transpose(1, 2)  # B x h x L x d_k
         V = self.W_V(V).view(V.size(0), -1, self.num_heads, self.d_v).transpose(1, 2)  # B x h x L x d_v
 
-        # Calculate scaled dot-product attention for each head
         scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)  # B x h x L x L
         attention_weights = F.softmax(scores, dim=-1)
         heads_output = torch.matmul(attention_weights, V)  # B x h x L x d_v
-        # Concatenate heads and apply final linear transformation
+
         concat_heads = heads_output.transpose(1, 2).contiguous().view(Q.size(0), -1, self.num_heads * self.d_v)
         multi_head_output = self.W_O(concat_heads)  # B x L x d_m
         return multi_head_output, attention_weights
@@ -50,7 +45,6 @@ class InputEncoder(nn.Module):
 
 
 class PositionalEncoding(nn.Module):
-
     def __init__(self, d_model, seq_len, dropout=0.1):
         super(PositionalEncoding, self).__init__()
         self.d_model = d_model
@@ -71,7 +65,6 @@ class PositionalEncoding(nn.Module):
 
 
 class FeedForwardBlock(nn.Module):
-
     def __init__(self, d_model, d_ff, dropout=0.1):
         super(FeedForwardBlock, self).__init__()
         self.linear1 = nn.Linear(d_model, d_model)
@@ -119,8 +112,7 @@ class CombineWeights(nn.Module):
 
     def forward(self, attention_weights):
         A = torch.mean(attention_weights, dim=1)
-        y = F.sigmoid(self.linear(A))
-
+        y = torch.sigmoid(self.linear(A))
         return y
 
 
@@ -157,6 +149,7 @@ class Generator(nn.Module):
 
 class Discriminator(nn.Module):
     def __init__(self, d_model, seq_len, d_ff, num_heads, d_k, d_v):
+        super(Discriminator, self).__init__()
         self.input_encoding = InputEncoder(d_k, d_model)
         self.positional_encoder = PositionalEncoding(d_model, seq_len)
         self.transformer_block = TransformerBlock(d_model, d_ff, num_heads, d_k, d_v)
@@ -167,46 +160,65 @@ class Discriminator(nn.Module):
         out = self.positional_encoder(out)
         out, _ = self.transformer_block(out)
         out = self.linear(out)
-        p_matrix = F.sigmoid(out)
+        p_matrix = torch.sigmoid(out)
+        return p_matrix
 
 
-if __name__ == '__main__':
-    gen = Generator(128, 100, 128, 3, 52, 52)
-    disc = Discriminator(128, 100, 128, 3, 52, 52)
-    x = torch.randn(1, 100, 52)
-    time_lag = torch.randn(1, 100, 52)
-    mask = torch.randn(1, 100, 52)
-    hint = torch.randn(1, 100, 52)
-    learning_rate = 1e-4
-    mse_loss = nn.MSELoss()
-    # Initialize optimizers
-    optimizer_G = optim.Adam(gen.parameters(), lr=learning_rate)
-    optimizer_D = optim.Adam(disc.parameters(), lr=learning_rate)
-    num_epochs = 100
-    for epoch in range(num_epochs):
-        # Train Discriminator
-        optimizer_D.zero_grad()
+def calculate_matrices(x, mask_ratio=0.2):
+    M_prime = ~torch.isnan(x).float()
+    M = M_prime.clone()
+    I = torch.zeros_like(M)
 
-        x_hat = gen(x, time_lag, mask)
-        p = disc(x_hat, hint)
+    # Artificially mask some observed values
+    masked_indices = torch.rand_like(x) < mask_ratio
+    M[masked_indices] = 0
+    I[masked_indices] = 1
+    return M, M_prime, I
 
-        ld = mse_loss(p, mask)
-        ld.backward(retain_graph=True)
-        optimizer_D.step()
 
-        # Train Generator
-        optimizer_G.zero_grad()
+def create_hint_matrix(M_prime, hint_ratio=0.9):
+    hint_matrix = torch.zeros_like(M_prime)
+    for i in range(M_prime.size(0)):
+        observed_indices = (M_prime[i] == 1).nonzero().squeeze()
+        hint_indices = torch.randperm(observed_indices.size(0))[:int(hint_ratio * observed_indices.size(0))]
+        hint_matrix[i, observed_indices[hint_indices]] = 1
+    return hint_matrix
 
-        x_hat = gen(x, time_lag, mask)
-        p = disc(x_hat, hint)
 
-        term1 = mse_loss(x * mask, x_hat * mask)
-        term2 = mse_loss(x * I, x_hat * I)
+def calculate_delta_matrix(x):
+    # Calculate the time difference matrix delta
+    delta = torch.zeros_like(x)
+    for i in range(1, x.size(1)):
+        delta[:, i, :] = 1 + delta[:, i - 1, :] * (1 - torch.isnan(x[:, i, :]).float())
+    return delta
 
-        lg = lambda_ * term1 + eta * term2 - ld
-        lg.backward()
-        optimizer_G.step()
 
-        # Print losses for monitoring
-        print(f"Epoch [{epoch}/{num_epochs}]\
-                   Loss D: {ld.item()}, Loss G: {lg.item()}")
+def impute_data(x, generator, discriminator, epochs=int(1e4), mask_ratio=0.2, hint_ratio=0.9, lr=0.001):
+    generator_opt = torch.optim.Adam(generator.parameters(), lr=lr)
+    discriminator_opt = torch.optim.Adam(discriminator.parameters(), lr=lr)
+    M, M_prime, I = calculate_matrices(x, mask_ratio)
+    delta = calculate_delta_matrix(x)
+    for epoch in range(epochs):
+        hint = create_hint_matrix(M_prime, hint_ratio)
+        x_imputed = generator(x, delta, M)
+
+        discriminator_opt.zero_grad()
+        p_matrix = discriminator(x_imputed, hint)
+        d_loss = F.mse_loss(p_matrix, M)
+        d_loss.backward()
+        discriminator_opt.step()
+
+        generator_opt.zero_grad()
+        x_imputed = generator(x, M, I)
+        _ = discriminator(x_imputed, hint)
+
+        term1 = F.mse_loss(x * M_prime, x_imputed * M_prime)
+        term2 = F.mse_loss(x * I, x_imputed * I)
+
+        g_loss = 0.5 * term1 + 0.5 * term2 - d_loss
+        g_loss.backward()
+        generator_opt.step()
+
+        if epoch % 100 == 0:
+            print(f'Epoch {epoch}/{epochs}, Generator Loss: {g_loss.item()}, Discriminator Loss: {d_loss.item()}')
+    return x_imputed
