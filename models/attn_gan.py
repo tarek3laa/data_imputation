@@ -164,61 +164,63 @@ class Discriminator(nn.Module):
         return p_matrix
 
 
-def calculate_matrices(x, mask_ratio=0.2):
-    M_prime = ~torch.isnan(x).float()
-    M = M_prime.clone()
-    I = torch.zeros_like(M)
+class AttnGan:
+    def __init__(self, d_model, seq_len, d_ff, num_heads, d_k, d_v):
+        self.generator = Generator(d_model, seq_len, d_ff, num_heads, d_k, d_v)
+        self.discriminator = Discriminator(d_model, seq_len, d_ff, num_heads, d_k, d_v)
 
-    # Artificially mask some observed values
-    masked_indices = torch.rand_like(x) < mask_ratio
-    M[masked_indices] = 0
-    I[masked_indices] = 1
-    return M, M_prime, I
+    def calculate_matrices(self, x, mask_ratio=0.2):
+        M_prime = ~torch.isnan(x).float()
+        M = M_prime.clone()
+        I = torch.zeros_like(M)
 
+        # Artificially mask some observed values
+        masked_indices = torch.rand_like(x) < mask_ratio
+        M[masked_indices] = 0
+        I[masked_indices] = 1
+        return M, M_prime, I
 
-def create_hint_matrix(M_prime, hint_ratio=0.9):
-    hint_matrix = torch.zeros_like(M_prime)
-    for i in range(M_prime.size(0)):
-        observed_indices = (M_prime[i] == 1).nonzero().squeeze()
-        hint_indices = torch.randperm(observed_indices.size(0))[:int(hint_ratio * observed_indices.size(0))]
-        hint_matrix[i, observed_indices[hint_indices]] = 1
-    return hint_matrix
+    def create_hint_matrix(self, M_prime, hint_ratio=0.9):
+        hint_matrix = torch.zeros_like(M_prime)
+        for i in range(M_prime.size(0)):
+            observed_indices = (M_prime[i] == 1).nonzero().squeeze()
+            hint_indices = torch.randperm(observed_indices.size(0))[:int(hint_ratio * observed_indices.size(0))]
+            hint_matrix[i, observed_indices[hint_indices]] = 1
+        return hint_matrix
 
+    def calculate_delta_matrix(self, x):
+        # Calculate the time difference matrix delta
+        delta = torch.zeros_like(x)
+        for i in range(1, x.size(1)):
+            delta[:, i, :] = 1 + delta[:, i - 1, :] * (1 - torch.isnan(x[:, i, :]).float())
+        return delta
 
-def calculate_delta_matrix(x):
-    # Calculate the time difference matrix delta
-    delta = torch.zeros_like(x)
-    for i in range(1, x.size(1)):
-        delta[:, i, :] = 1 + delta[:, i - 1, :] * (1 - torch.isnan(x[:, i, :]).float())
-    return delta
+    def fit_transform(self, x, epochs=int(1e4), mask_ratio=0.2, hint_ratio=0.9, lr=0.001):
+        generator_opt = torch.optim.Adam(self.generator.parameters(), lr=lr)
+        discriminator_opt = torch.optim.Adam(self.discriminator.parameters(), lr=lr)
+        M, M_prime, I = self.calculate_matrices(x, mask_ratio)
+        delta = self.calculate_delta_matrix(x)
+        for epoch in range(epochs):
+            hint = self.create_hint_matrix(M_prime, hint_ratio)
+            x_imputed = self.generator(x, delta, M)
 
+            discriminator_opt.zero_grad()
+            p_matrix = self.discriminator(x_imputed, hint)
+            d_loss = F.mse_loss(p_matrix, M)
+            d_loss.backward()
+            discriminator_opt.step()
 
-def impute_data(x, generator, discriminator, epochs=int(1e4), mask_ratio=0.2, hint_ratio=0.9, lr=0.001):
-    generator_opt = torch.optim.Adam(generator.parameters(), lr=lr)
-    discriminator_opt = torch.optim.Adam(discriminator.parameters(), lr=lr)
-    M, M_prime, I = calculate_matrices(x, mask_ratio)
-    delta = calculate_delta_matrix(x)
-    for epoch in range(epochs):
-        hint = create_hint_matrix(M_prime, hint_ratio)
-        x_imputed = generator(x, delta, M)
+            generator_opt.zero_grad()
+            x_imputed = self.generator(x, M, I)
+            _ = self.discriminator(x_imputed, hint)
 
-        discriminator_opt.zero_grad()
-        p_matrix = discriminator(x_imputed, hint)
-        d_loss = F.mse_loss(p_matrix, M)
-        d_loss.backward()
-        discriminator_opt.step()
+            term1 = F.mse_loss(x * M_prime, x_imputed * M_prime)
+            term2 = F.mse_loss(x * I, x_imputed * I)
 
-        generator_opt.zero_grad()
-        x_imputed = generator(x, M, I)
-        _ = discriminator(x_imputed, hint)
+            g_loss = 0.5 * term1 + 0.5 * term2 - d_loss
+            g_loss.backward()
+            generator_opt.step()
 
-        term1 = F.mse_loss(x * M_prime, x_imputed * M_prime)
-        term2 = F.mse_loss(x * I, x_imputed * I)
-
-        g_loss = 0.5 * term1 + 0.5 * term2 - d_loss
-        g_loss.backward()
-        generator_opt.step()
-
-        if epoch % 100 == 0:
-            print(f'Epoch {epoch}/{epochs}, Generator Loss: {g_loss.item()}, Discriminator Loss: {d_loss.item()}')
-    return x_imputed
+            if epoch % 100 == 0:
+                print(f'Epoch {epoch}/{epochs}, Generator Loss: {g_loss.item()}, Discriminator Loss: {d_loss.item()}')
+        return x_imputed
